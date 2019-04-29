@@ -1,0 +1,207 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Parameters": {
+        "RootDomainName": {
+            "Description": "Domain name for your website (example.com)",
+            "Type": "String"
+        }
+    },
+	"Resources": {
+		"MyEC2Instance": {
+			"Type": "AWS::EC2::Instance",
+			"Properties": {
+				"ImageId": "ami-0cd3dfa4e37921605",
+				"KeyName": "sahilkey",
+				"SecurityGroupIds": ["sg-0c384e5ff243b2dea"],
+				 "InstanceType" : "t2.micro",
+				"UserData": {
+					"Fn::Base64": {
+						"Fn::Join": [
+							"",
+							[
+								"#!/bin/bash -v\n",
+								"echo '",
+								{
+									"Ref": "S3Bucket"
+								},
+								"' > s3.txt \n",
+								"echo '",
+								{
+									"Ref": "RootRole"
+								},
+								"' > role.txt \n",
+
+								"curl http://169.254.169.254/latest/meta-data/instance-id > instanceID \n",
+								"curl -O https://raw.githubusercontent.com/ssparashar/REAN/master/index.html \n",
+								"curl -O https://raw.githubusercontent.com/ssparashar/REAN/master/error.html \n",
+								"aws ec2 associate-iam-instance-profile --instance-id $(cat instanceID) --iam-instance-profile Name=$(cat role.txt) \n",
+								"aws s3 cp index.html s3://$(cat s3.txt) \n",
+								"aws s3 cp error.html s3://$(cat s3.txt) \n",
+								"aws s3api put-object-acl --bucket $(cat s3.txt) --key index.html --acl public-read \n",
+								"aws s3api put-object-acl --bucket $(cat s3.txt) --key error.html --acl public-read \n"
+							]
+						]
+					}
+				},
+				"IamInstanceProfile": {
+					"Ref": "RootInstanceProfile"
+				}
+			}
+		},
+	"RootRole": {
+		"Type": "AWS::IAM::Role",
+		"Properties": {
+			"AssumeRolePolicyDocument": {
+				"Statement": [{
+					"Effect": "Allow",
+					"Principal": {
+						"Service": [
+							"ec2.amazonaws.com"
+						]
+					},
+					"Action": [
+						"sts:AssumeRole"
+					]
+				}]
+			},
+			"Path": "/"
+		}
+	},
+	"RolePolicies": {
+		"Type": "AWS::IAM::Policy",
+		"Properties": {
+			"PolicyName": "root",
+			"PolicyDocument": {
+				"Statement": [{
+					"Effect": "Allow",
+					"Action": "*",
+					"Resource": "*"
+				}]
+			},
+			"Roles": [{
+				"Ref": "RootRole"
+			}]
+		}
+	},
+	"RootInstanceProfile": {
+		"Type": "AWS::IAM::InstanceProfile",
+		"Properties": {
+			"Path": "/",
+			"Roles": [{
+				"Ref": "RootRole"
+			}]
+		}
+	},
+	"DNS": {
+		"Type": "AWS::Route53::HostedZone",
+		"Properties": {
+			"HostedZoneConfig": {
+				"Comment": "Private hosted zone for sahil.com"
+			},
+			"Name": { "Fn::Join" : [ "", [ {"Ref": "RootDomainName"} ] ] },
+			"VPCs": [{
+				"VPCId": "vpc-0576130c5f08d7a1f",
+				"VPCRegion": "us-east-2"
+			}],
+			"HostedZoneTags": [{
+					"Key": "Type",
+					"Value": "PvtHostedZone"
+				},
+				{
+					"Key": "Usage",
+					"Value": "S3 Website"
+				}
+			]
+		}
+	},
+	"RecSet": {
+		"Type": "AWS::Route53::RecordSet",
+		"Properties": {
+
+                        "Name": {"Ref": "RootDomainName"},
+                        "Type": "A",
+                        "AliasTarget": {
+                            "HostedZoneId": { "Ref" : "DNS" },
+                            "DNSName": {"Fn::GetAtt": [
+											                    "S3Bucket",
+											                    "DomainName"
+											                ]}
+                        },
+
+		
+			"Comment": "A record to point to S3 website",
+			"HostedZoneId" : { "Ref" : "DNS" }
+		}
+	},
+	"S3Bucket": {
+		"Type": "AWS::S3::Bucket",
+		"Properties": {
+			"BucketName" : {"Ref":"RootDomainName"},
+			"AccessControl": "PublicRead",
+			"WebsiteConfiguration": {
+				"IndexDocument": "index.html",
+				"ErrorDocument": "error.html"
+			}
+		},
+		"DeletionPolicy": "Retain"
+	},
+	"BucketPolicy": {
+		"Type": "AWS::S3::BucketPolicy",
+		"Properties": {
+			"PolicyDocument": {
+				"Id": "MyPolicy",
+				"Version": "2012-10-17",
+				"Statement": [{
+					"Sid": "PublicReadGetObject",
+					"Effect": "Allow",
+					"Principal": "*",
+					"Action": "s3:GetObject",
+					"Resource": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:s3:::",
+								{
+									"Ref": "S3Bucket"
+								},
+								"/*"
+							]
+						]
+					}
+				}]
+			},
+			"Bucket": {
+				"Ref": "S3Bucket"
+			}
+		}
+	}
+},
+	"Outputs": {
+		"WebsiteURL": {
+			"Value": {
+				"Fn::GetAtt": [
+					"S3Bucket",
+					"WebsiteURL"
+				]
+			},
+			"Description": "URL for website hosted on S3"
+		},
+		"S3BucketSecureURL": {
+			"Value": {
+				"Fn::Join": [
+					"",
+					[
+						"https://",
+						{
+							"Fn::GetAtt": [
+								"S3Bucket",
+								"DomainName"
+							]
+						}
+					]
+				]
+			},
+			"Description": "Name of S3 bucket to hold website content"
+		}
+	}
+}
